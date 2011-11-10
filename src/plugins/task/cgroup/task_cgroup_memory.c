@@ -142,20 +142,6 @@ extern int task_cgroup_memory_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	      (unsigned long) (max_swap/(1024*1024)),
 	      (unsigned) slurm_cgroup_conf->min_ram_space);
 
-        /*
-         *  Warning: OOM Killer must be disabled for slurmstepd
-         *  or it would be destroyed if the application use
-         *  more memory than permitted
-         *
-         *  If an env value is already set for slurmstepd
-         *  OOM killer behavior, keep it, otherwise set the
-         *  -17 value, wich means do not let OOM killer kill it
-         *
-         *  FYI, setting "export SLURMSTEPD_OOM_ADJ=-17"
-         *  in /etc/sysconfig/slurm would be the same
-         */
-        setenv("SLURMSTEPD_OOM_ADJ","-17",0);
-
 	return SLURM_SUCCESS;
 
 clean:
@@ -175,20 +161,14 @@ extern int task_cgroup_memory_fini(slurm_cgroup_conf_t *slurm_cgroup_conf)
 		return SLURM_SUCCESS;
 
 	/*
-	 * Move the slurmstepd back to the root memory cg and force empty
-	 * the step cgroup to move its allocated pages to its parent.
-	 * The release_agent will asynchroneously be called for the step
-	 * cgroup. It will do the necessary cleanup.
-	 * It should be good if this force_empty mech could be done directly
-	 * by the memcg implementation at the end of the last task managed
-	 * by a cgroup. It is too difficult and near impossible to handle
-	 * that cleanup correctly with current memcg.
+	 * Delete the step memory cgroup as all the tasks have now exited
+	 * The job memory cgroup will be removed by the release agent
+	 * if possible (no other step running).
+	 * The user memory cgroup will be removed by the release agent
+	 * when possible too (no other job running).
 	 */
-	if (xcgroup_create(&memory_ns,&memory_cg,"",0,0) == XCGROUP_SUCCESS) {
-		xcgroup_set_uint32_param(&memory_cg,"tasks",getpid());
-		xcgroup_destroy(&memory_cg);
-		xcgroup_set_param(&step_memory_cg,"memory.force_empty","1");
-	}
+	if (xcgroup_delete(&step_memory_cg) != SLURM_SUCCESS)
+		error("task/cgroup: unable to remove step memcg : %m");
 
 	xcgroup_destroy(&user_memory_cg);
 	xcgroup_destroy(&job_memory_cg);
@@ -367,14 +347,17 @@ extern int task_cgroup_memory_create(slurmd_job_t *job)
 		xcgroup_destroy(&user_memory_cg);
 		goto error;
 	}
-	xcgroup_set_param(&user_memory_cg,"memory.use_hierarchy","1");
+	if ( xcgroup_set_param(&user_memory_cg,"memory.use_hierarchy","1")
+	     != XCGROUP_SUCCESS ) {
+		error("task/cgroup: unable to ask for hierarchical accounting"
+		      "of user memcg '%s'",user_memory_cg.path);
+		xcgroup_destroy (&user_memory_cg);
+		goto error;
+	}
 
 	/*
 	 * Create job cgroup in the memory ns (it could already exist)
 	 * and set the associated memory limits.
-	 * Ask for hierarchical memory accounting starting from the job
-	 * container in order to guarantee that a job will stay on track
-	 * regardless of the consumption of each step.
 	 */
 	if (memcg_initialize (&memory_ns, &job_memory_cg, job_cgroup_path,
 	                      job->job_mem, getuid(), getgid()) < 0) {
@@ -385,6 +368,8 @@ extern int task_cgroup_memory_create(slurmd_job_t *job)
 	/*
 	 * Create step cgroup in the memory ns (it should not exists)
 	 * and set the associated memory limits.
+	 * Then disable notify_on_release for the step memcg, it will be
+	 * manually removed by the plugin at the end of the step.
 	 */
 	if (memcg_initialize (&memory_ns, &step_memory_cg, jobstep_cgroup_path,
 	                      job->step_mem, uid, gid) < 0) {
@@ -392,18 +377,13 @@ extern int task_cgroup_memory_create(slurmd_job_t *job)
 		xcgroup_destroy(&job_memory_cg);
 		goto error;
 	}
-
-	/*
-	 * Attach the slurmstepd to the step memory cgroup
-	 */
-	pid = getpid();
-	rc = xcgroup_add_pids(&step_memory_cg,&pid,1);
-	if (rc != XCGROUP_SUCCESS) {
-		error("task/cgroup: unable to add slurmstepd to memory cg '%s'",
-		      step_memory_cg.path);
-		fstatus = SLURM_ERROR;
-	} else
-		fstatus = SLURM_SUCCESS;
+	if (xcgroup_set_params(&step_memory_cg, "notify_on_release=0")
+	    != XCGROUP_SUCCESS) {
+		/* treat that error as a warning as the release agent would
+		 * purge the memcg in that case */
+		error("task/cgroup: unable to disable notify_on_release of "
+		      "step memcg '%s'",step_memory_cg.path);
+	}
 
 error:
 	xcgroup_unlock(&memory_cg);
@@ -415,10 +395,18 @@ error:
 extern int task_cgroup_memory_attach_task(slurmd_job_t *job)
 {
 	int fstatus = SLURM_ERROR;
+	pid_t pid;
 
-	/* tasks are automatically attached as slurmstepd is in the step cg */
-	fstatus = SLURM_SUCCESS;
+	/*
+	 * Attach the current task to the step memory cgroup
+	 */
+	pid = getpid();
+	if (xcgroup_add_pids(&step_memory_cg,&pid,1) != XCGROUP_SUCCESS) {
+		error("task/cgroup: unable to add task[pid=%u] to "
+		      "memory cg '%s'",pid,step_memory_cg.path);
+		fstatus = SLURM_ERROR;
+	} else
+		fstatus = SLURM_SUCCESS;
 
 	return fstatus;
 }
-
