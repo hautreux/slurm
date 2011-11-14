@@ -160,35 +160,28 @@ extern int task_cgroup_memory_fini(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	     jobstep_cgroup_path[0] == '\0')
 		return SLURM_SUCCESS;
 	/*
-	 * Delete the step memory cgroup as all the tasks have now exited
-	 * The job memory cgroup will be removed by the release agent
-	 * if possible (no other step running).
-	 * The user memory cgroup will be removed by the release agent
-	 * if possible too (no other job running).
-	 * With memcg, the release agent mech is not really reliable as
-	 * it requires than no more pages are accounted to the cgroups.
-	 * That is the reason why we do it manually just after as an
-	 * rmdir of the cgroup (xcgroup_delete) will be more deterministic.
-	 */
-	if (xcgroup_delete(&step_memory_cg) != SLURM_SUCCESS)
-		error("task/cgroup: unable to remove step memcg : %m");
-
-	/*
-	 * Lock the root memcg and try to remove the job memcg. If it
-	 * fails, it is due to the fact that it is still in use by an
+	 * Lock the root memcg and try to remove the different memcgs.
+	 * First, delete step memcg as all the tasks have now exited.
+	 * At that time, the job memory cgroup could be removed by the 
+	 * release agent, but as we own the lock, we can try to proceed
+	 * here directly. Furthermore, as the release agent mech is quite
+	 * unreliable as it requires that no more pages are accounted in the
+	 * memcg, it is better to do the step memcg removal if possible.
+	 * If it fails, it is due to the fact that it is still in use by an
 	 * other running step.
-	 * In case of problem, we still rely on the notify_on_release that 
-	 * will do the removal when possible in the future (not so 
-	 * deterministic if pages still associated to the job memcg)
-	 * Also try to remove the user memcg. If it fails, it is due to jobs
-	 * that are still running for the same user on the node or due to tasks
-	 * attached directly to the user cg by an other component (PAM).
+	 * After that, we try to remove the user memcg. If it fails, it is due
+	 * to jobs that are still running for the same user on the node or 
+	 * because of tasks attached directly to the user cg by an other
+	 * component (PAM).
 	 * For now, do not try to detect if only externally attached tasks
-	 * are present to see if they have to be be moved to the
-	 * orhpan memcg but that could be done in the future.
+	 * are present to see if they can be be moved to the orhpan memcg. 
+	 * That could be done in the future, if it is necessary.
 	 */
 	if (xcgroup_create(&memory_ns,&memory_cg,"",0,0) == XCGROUP_SUCCESS) {
 		if (xcgroup_lock(&memory_cg) == XCGROUP_SUCCESS) {
+			if (xcgroup_delete(&step_memory_cg) != SLURM_SUCCESS)
+				error("task/cgroup: unable to remove step "
+				      "memcg : %m");
 			if (xcgroup_delete(&job_memory_cg) != XCGROUP_SUCCESS)
 				info("task/cgroup: not removing "
 				     "job memcg : %m");
