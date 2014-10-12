@@ -256,6 +256,28 @@ typedef enum slurm_parser_enum {
 	S_P_PLAIN_STRING /* useful only within S_P_EXPLINE */
 } slurm_parser_enum_t;
 
+/*
+ * Standard Slurm conf files use key=value elements.
+ * slurm_parser_operator_t extends that concept to cover additionnal
+ * use cases like :
+ *        key+=value
+ *        key-=value
+ *        key*=value
+ *        key/=value
+ *
+ * this feature is for now dedicated to the layouts framework. It enables
+ * to have advanced modifications of entities reusing the traditional
+ * Slurm parser with the new operator information to manage updates.
+ *
+ */
+typedef enum slurm_parser_operator {
+	S_P_OPERATOR_SET = 0,
+	S_P_OPERATOR_ADD,
+	S_P_OPERATOR_SUB,
+	S_P_OPERATOR_MUL,
+	S_P_OPERATOR_DIV
+} slurm_parser_operator_t;
+
 typedef struct conf_file_options {
 	char *key;
 	slurm_parser_enum_t type;
@@ -283,6 +305,13 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
  * Returns 1 if the line is parsed cleanly, and 0 otherwise.
  */
 int s_p_parse_pair(s_p_hashtbl_t *hashtbl, const char *key, const char *value);
+
+/*
+ * Returns 1 if the line is parsed cleanly, and 0 otherwise.
+ * Set the operator of the updated s_p_values_t to the provided one.
+ */
+int s_p_parse_pair_with_op(s_p_hashtbl_t *hashtbl, const char *key,
+			   const char *value, slurm_parser_operator_t operator);
 
 /*
  * Returns 1 if the line is parsed cleanly, and 0 otherwise.
@@ -415,6 +444,24 @@ int s_p_get_uint16(uint16_t *num, const char *key,
  */
 int s_p_get_uint32(uint32_t *num, const char *key,
 		   const s_p_hashtbl_t *hashtbl);
+
+/*
+ * s_p_get_operator
+ *
+ * Search for a key in a s_p_hashtbl_t and return the operator
+ * associated with that key in the configuration file. The operator
+ * is one of the slurm_parser_operator_t enum possible values.
+ *
+ * OUT operator - pointer to a slurm_parser_operator_t where the
+ *     operator is returned
+ * IN key - hash table key
+ * IN hashtbl - hash table created by s_p_hashtbl_create()
+ *
+ * Returns 1 when a operator was set for "key" during parsing and
+ *     "operator" was successfully set, otherwise returns 0;
+ */
+int s_p_get_operator(slurm_parser_operator_t *operator, const char *key,
+		     const s_p_hashtbl_t *hashtbl);
 
 /*
  * s_p_get_pointer

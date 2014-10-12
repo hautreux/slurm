@@ -89,7 +89,7 @@ static regex_t keyvalue_re;
 static char *keyvalue_pattern =
 	"^[[:space:]]*"
 	"([[:alnum:]]+)" /* key */
-	"[[:space:]]*=[[:space:]]*"
+	"[[:space:]]*([-*+/]?)=[[:space:]]*"
 	"((\"([^\"]*)\")|([^[:space:]]+))" /* value: quoted with whitespace,
 					    * or unquoted and no whitespace */
 	"([[:space:]]|$)";
@@ -98,6 +98,7 @@ static bool keyvalue_initialized = false;
 struct s_p_values {
 	char *key;
 	int type;
+	slurm_parser_operator_t operator;
 	int data_count;
 	void *data;
 	int (*handler)(void **data, slurm_parser_enum_t type,
@@ -172,6 +173,7 @@ s_p_hashtbl_t *s_p_hashtbl_create(const s_p_options_t options[])
 	for (op = options; op->key != NULL; op++) {
 		value = xmalloc(sizeof(s_p_values_t));
 		value->key = xstrdup(op->key);
+		value->operator = S_P_OPERATOR_SET;
 		value->type = op->type;
 		value->data_count = 0;
 		value->data = NULL;
@@ -292,14 +294,17 @@ static void _keyvalue_regex_init(void)
  * Return 0 when a key-value pair is found, and -1 otherwise.
  */
 static int _keyvalue_regex(const char *line,
-			   char **key, char **value, char **remaining)
+			   char **key, char **value, char **remaining,
+			   slurm_parser_operator_t *operator)
 {
 	size_t nmatch = 8;
 	regmatch_t pmatch[8];
+	char op;
 
 	*key = NULL;
 	*value = NULL;
 	*remaining = (char *)line;
+	*operator = S_P_OPERATOR_SET;
 	memset(pmatch, 0, sizeof(regmatch_t)*nmatch);
 
 	if (regexec(&keyvalue_re, line, nmatch, pmatch, 0)
@@ -309,18 +314,30 @@ static int _keyvalue_regex(const char *line,
 
 	*key = (char *)(xstrndup(line + pmatch[1].rm_so,
 				 pmatch[1].rm_eo - pmatch[1].rm_so));
-
-	if (pmatch[4].rm_so != -1) {
-		*value = (char *)(xstrndup(line + pmatch[4].rm_so,
-					   pmatch[4].rm_eo - pmatch[4].rm_so));
-	} else if (pmatch[5].rm_so != -1) {
+	if (pmatch[2].rm_so != -1 &&
+	    (pmatch[2].rm_so != pmatch[2].rm_eo)) {
+		op = *(line + pmatch[2].rm_so);
+		if (op == '+') {
+			*operator = S_P_OPERATOR_ADD;
+		} else if (op == '-') {
+			*operator = S_P_OPERATOR_SUB;
+		} else if (op == '*') {
+			*operator = S_P_OPERATOR_MUL;
+		} else if (op == '/') {
+			*operator = S_P_OPERATOR_DIV;
+		}
+	}
+	if (pmatch[5].rm_so != -1) {
 		*value = (char *)(xstrndup(line + pmatch[5].rm_so,
 					   pmatch[5].rm_eo - pmatch[5].rm_so));
+	} else if (pmatch[6].rm_so != -1) {
+		*value = (char *)(xstrndup(line + pmatch[6].rm_so,
+					   pmatch[6].rm_eo - pmatch[6].rm_so));
 	} else {
 		*value = xstrdup("");
 	}
 
-	*remaining = (char *)(line + pmatch[2].rm_eo);
+	*remaining = (char *)(line + pmatch[3].rm_eo);
 
 	return 0;
 }
@@ -498,6 +515,7 @@ s_p_hashtbl_t* _hashtbl_copy_keys(const s_p_hashtbl_t* from_hashtbl,
 			     val_ptr->next) {
 			val_copy = xmalloc(sizeof(s_p_values_t));
 			val_copy->key = xstrdup(val_ptr->key);
+			val_copy->operator = val_ptr->operator;
 			val_copy->type = val_ptr->type;
 			val_copy->handler = val_ptr->handler;
 			val_copy->destroy = val_ptr->destroy;
@@ -876,11 +894,13 @@ int s_p_parse_line(s_p_hashtbl_t *hashtbl, const char *line, char **leftover)
 	char *ptr = (char *)line;
 	s_p_values_t *p;
 	char *new_leftover;
+	slurm_parser_operator_t op;
 
 	_keyvalue_regex_init();
 
-	while (_keyvalue_regex(ptr, &key, &value, &new_leftover) == 0) {
+	while (_keyvalue_regex(ptr, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
+			p->operator = op;
 			_handle_keyvalue_match(p, value,
 					       new_leftover, &new_leftover);
 			*leftover = ptr = new_leftover;
@@ -907,11 +927,13 @@ static int _parse_next_key(s_p_hashtbl_t *hashtbl,
 	char *key, *value;
 	s_p_values_t *p;
 	char *new_leftover;
+	slurm_parser_operator_t op;
 
 	_keyvalue_regex_init();
 
-	if (_keyvalue_regex(line, &key, &value, &new_leftover) == 0) {
+	if (_keyvalue_regex(line, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
+			p->operator = op;
 			_handle_keyvalue_match(p, value,
 					       new_leftover, &new_leftover);
 			*leftover = new_leftover;
@@ -1348,6 +1370,7 @@ static s_p_hashtbl_t* _parse_expline_adapt_table(const s_p_hashtbl_t* hashtbl)
 		for (val_ptr = hashtbl[i]; val_ptr; val_ptr = val_ptr->next) {
 			val_copy = xmalloc(sizeof(s_p_values_t));
 			val_copy->key = xstrdup(val_ptr->key);
+			val_copy->operator = val_ptr->operator;
 			if (val_ptr->type == S_P_PLAIN_STRING) {
 				val_copy->type = S_P_STRING;
 			} else {
@@ -1450,7 +1473,14 @@ static int _parse_expline_doexpand(s_p_hashtbl_t** tables,
 			free(item_str);
 			item_str = hostlist_shift(item_hl);
 		}
-		if (!s_p_parse_pair(tables[i], item->key, item_str)) {
+		/*
+		 * The destination tables are created without any info on the
+		 * operator associated with the key in s_p_parse_line_expanded.
+		 * So, parse the targeted pair injecting that information to
+		 * push it into the destination table.
+		 */
+		if (!s_p_parse_pair_with_op(tables[i], item->key, item_str,
+					    item->operator)) {
 			error("Error parsing %s = %s.", item->key, item_str);
 			free(item_str);
 			return 0;
@@ -1558,8 +1588,10 @@ cleanup:
 
 /*
  * Returns 1 if the line is parsed cleanly, and 0 otherwise.
+ * Set the operator of the targeted s_p_values_t to the provided value.
  */
-int s_p_parse_pair(s_p_hashtbl_t *hashtbl, const char *key, const char *value)
+int s_p_parse_pair_with_op(s_p_hashtbl_t *hashtbl, const char *key,
+			   const char *value, slurm_parser_operator_t operator)
 {
 	s_p_values_t *p;
 	char *leftover, *v;
@@ -1568,6 +1600,7 @@ int s_p_parse_pair(s_p_hashtbl_t *hashtbl, const char *key, const char *value)
 		error("Parsing error at unrecognized key: %s", key);
 		return 0;
 	}
+	p-> operator = operator;
 	/* we have value separated from key here so parse it different way */
 	while (*value != '\0' && isspace(*value))
 		value++; /* skip spaces at start if any */
@@ -1592,6 +1625,14 @@ int s_p_parse_pair(s_p_hashtbl_t *hashtbl, const char *key, const char *value)
 	xfree(value);
 
 	return 1;
+}
+
+/*
+ * Returns 1 if the line is parsed cleanly, and 0 otherwise.
+ */
+int s_p_parse_pair(s_p_hashtbl_t *hashtbl, const char *key, const char *value)
+{
+	return s_p_parse_pair_with_op(hashtbl, key, value, S_P_OPERATOR_SET);
 }
 
 /* common checks for s_p_get_* returns NULL if invalid.
@@ -1666,6 +1707,21 @@ int s_p_get_uint32(uint32_t *num, const char *key,
 		return 1;
 	}
 
+	return 0;
+}
+
+int s_p_get_operator(slurm_parser_operator_t *operator, const char *key,
+		     const s_p_hashtbl_t *hashtbl)
+{
+	s_p_values_t *p;
+	if (!hashtbl)
+		return 0;
+	p = _conf_hashtbl_lookup(hashtbl, key);
+	if (p) {
+		*operator = p->operator;
+		return 1;
+	}
+	error("Invalid key \"%s\"", key);
 	return 0;
 }
 
