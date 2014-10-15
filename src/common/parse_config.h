@@ -45,6 +45,7 @@
 
 #include <stdint.h>
 #include "slurm/slurm.h"
+#include "src/common/pack.h"
 
 /*
  * This slurm file parser provides a method for parsing a file
@@ -300,6 +301,17 @@ void s_p_hashtbl_destroy(s_p_hashtbl_t *hashtbl);
  */
 int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 		   bool ignore_new);
+
+/* Returns SLURM_SUCCESS if buffer was opened and parse correctly.
+ * buffer must be a valid Buf bufferonly containing strings.The parsing
+ * stops at the first non string content extracted.
+ * OUT hash_val - cyclic redundancy check (CRC) character-wise value
+ *                of file.
+ * IN ignore_new - do not treat unrecognized keywords as a fatal error,
+ *                 print debug() message and continue
+ */
+int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
+		     Buf buffer, bool ignore_new);
 
 /*
  * Returns 1 if the line is parsed cleanly, and 0 otherwise.

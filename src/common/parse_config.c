@@ -55,6 +55,7 @@
 #include "src/common/hostlist.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
+#include "src/common/pack.h"
 #include "src/common/parse_config.h"
 #include "src/common/parse_value.h"
 #include "src/common/read_config.h"
@@ -67,6 +68,7 @@
 
 strong_alias(s_p_hashtbl_create,	slurm_s_p_hashtbl_create);
 strong_alias(s_p_hashtbl_destroy,	slurm_s_p_hashtbl_destroy);
+strong_alias(s_p_parse_buffer,		slurm_s_p_parse_buffer);
 strong_alias(s_p_parse_file,		slurm_s_p_parse_file);
 strong_alias(s_p_parse_pair,		slurm_s_p_parse_pair);
 strong_alias(s_p_parse_line,		slurm_s_p_parse_line);
@@ -1175,6 +1177,59 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 
 	xfree(line);
 	fclose(f);
+	return rc;
+}
+
+int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
+		     Buf buffer, bool ignore_new)
+{
+	char *leftover = NULL;
+	int rc = SLURM_SUCCESS;
+	int line_number;
+	uint32_t utmp32;
+	char *tmp_str = NULL;
+
+	if (!buffer) {
+		error("s_p_parse_buffer: No buffer given.");
+		return SLURM_ERROR;
+	}
+
+	line_number = 0;
+	_keyvalue_regex_init();
+	while (remaining_buf(buffer) > 0) {
+		safe_unpackstr_xmalloc(&tmp_str, &utmp32, buffer);
+		if (tmp_str != NULL) {
+			line_number++;
+			if (*tmp_str == '\0') {
+				xfree(tmp_str);
+				continue;
+			}
+			_parse_next_key(hashtbl, tmp_str, &leftover, ignore_new);
+			/* Make sure that after parsing only whitespace
+			   is left over */
+			if (!_line_is_space(leftover)) {
+				char *ptr = xstrdup(leftover);
+				_strip_cr_nl(ptr);
+				if (ignore_new) {
+					debug("s_p_parse_buffer : error in line"
+					      " %d: \"%s\"", line_number, ptr);
+				} else {
+					error("s_p_parse_buffer : error in line"
+					      " %d: \"%s\"", line_number, ptr);
+					rc = SLURM_ERROR;
+				}
+				xfree(ptr);
+			}
+			xfree(tmp_str);
+			if (rc == SLURM_SUCCESS)
+				continue;
+		}
+	unpack_error:
+		debug3("s_p_parse_buffer: ending after line %u",
+		       line_number);
+		break;
+	}
+
 	return rc;
 }
 
