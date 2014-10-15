@@ -39,6 +39,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <sys/stat.h>
 
 #include "layouts_mgr.h"
 
@@ -715,26 +716,19 @@ static int _layouts_read_config_post(layout_plugin_t* plugin,
 }
 
 /*
- * _layouts_read_config - called after base entities are loaded successfully
- *
- * This function is the stage 1 of the layouts loading stage, where we collect
- * info on all the entities and store them in a global hash table.
- * Entities that do not already exist are created, otherwise updated.
- *
- * Information concerning the relations among entities provided by the
- * 'Enclosed' conf pragma are also extracted here for further usage in stage 2.
- *
- * When layout plugins callbacks are called, relational structures among
- * entities are not yet built.
+ * _layouts_load_config_common - called by layouts_read_config,
+ *       layouts_read_state or layouts_update_config with either a
+ *       filename or a buffer as well as a flag to indicate if it
+ *       is a full load or not (state save only)
  */
-static int _layouts_read_config(layout_plugin_t* plugin)
+static int _layouts_load_config_common(layout_plugin_t* plugin,
+				       char* filename, Buf buffer, int flags)
 {
 	s_p_hashtbl_t* tbl = NULL;
 	s_p_hashtbl_t** entities_tbl = NULL;
 	s_p_hashtbl_t* entity_tbl = NULL;
 	int entities_tbl_count = 0, i;
 	int rc = SLURM_ERROR;
-	char* filename = NULL;
 
 	uint32_t l_priority;
 
@@ -749,16 +743,23 @@ static int _layouts_read_config(layout_plugin_t* plugin)
 
 	tbl = _conf_make_hashtbl(plugin->layout->struct_type,
 				 plugin->ops->spec->options);
-	filename = _conf_get_filename(plugin->layout->type);
-	if (!filename) {
-		fatal("layouts: cannot find configuration file for "
-		      "required layout '%s'", plugin->name);
+	if (filename) {
+		if (s_p_parse_file(tbl, NULL, filename, false) == SLURM_ERROR) {
+			fatal("layouts: something went wrong when opening/reading "
+			      "'%s': %m", filename);
+		}
+		debug3("layouts: configuration file '%s' is loaded", filename);
+	} else if (buffer) {
+		if (s_p_parse_buffer(tbl, NULL, buffer, false) == SLURM_ERROR) {
+			error("layouts: something went wrong when parsing "
+			      "buffer : %m");
+			return SLURM_ERROR;
+		}
+		debug3("layouts: buffer loaded");
+	} else {
+		error("layouts: invalid usage of _layouts_load_config_common");
+		return SLURM_ERROR;
 	}
-	if (s_p_parse_file(tbl, NULL, filename, false) == SLURM_ERROR) {
-		fatal("layouts: something went wrong when opening/reading "
-		      "'%s': %m", filename);
-	}
-	debug3("layouts: configuration file '%s' is loaded", filename);
 
 	if (s_p_get_uint32(&l_priority, "Priority", tbl)) {
 		plugin->layout->priority = l_priority;
@@ -821,10 +822,12 @@ static int _layouts_read_config(layout_plugin_t* plugin)
 			}
 		}
 
-		/* look for "Enclosed" pragmas identifying the relations
+		/* ** Full load config only (flags==0) **
+		 * look for "Enclosed" pragmas identifying the relations
 		 * among entities and kep that along with the entity for
 		 * stage 2 */
-		_layouts_parse_relations(plugin, e, entity_tbl);
+		if(!flags)
+			_layouts_parse_relations(plugin, e, entity_tbl);
 
 		/*
 		 * if the layout plugin requests automerge, try to automatically
@@ -846,20 +849,22 @@ static int _layouts_read_config(layout_plugin_t* plugin)
 		}
 	}
 
-	/* post-read-and-build (post stage 1)
+	/* ** Full load config only (flags==0) **
+	 * post-read-and-build (post stage 1)
 	 * ensure that a Root entity was defined and set it as the root of
 	 * the relational structure of the layout.
 	 * fails in case of error as a root is mandatory to walk the relational
 	 * structure of the layout */
-	if (_layouts_read_config_post(plugin, tbl) != SLURM_SUCCESS) {
+	if (!flags &&
+	    _layouts_read_config_post(plugin, tbl) != SLURM_SUCCESS) {
 		goto cleanup;
 	}
 
-	/*
+	/* ** Full load config only (flags==0) **
 	 * call the layout plugin conf_done callback for further
 	 * layout specific actions.
 	 */
-	if (plugin->ops->conf_done) {
+	if (!flags && plugin->ops->conf_done) {
 		if (!plugin->ops->conf_done(mgr->entities, plugin->layout,
 					    tbl)) {
 			error("layouts: plugin %s/%s has an error parsing its"
@@ -873,8 +878,33 @@ static int _layouts_read_config(layout_plugin_t* plugin)
 
 cleanup:
 	s_p_hashtbl_destroy(tbl);
-	xfree(filename);
 
+	return rc;
+}
+
+/*
+ * _layouts_read_config - called after base entities are loaded successfully
+ *
+ * This function is the stage 1 of the layouts loading stage, where we collect
+ * info on all the entities and store them in a global hash table.
+ * Entities that do not already exist are created, otherwise updated.
+ *
+ * Information concerning the relations among entities provided by the
+ * 'Enclosed' conf pragma are also extracted here for further usage in stage 2.
+ *
+ * When layout plugins callbacks are called, relational structures among
+ * entities are not yet built.
+ */
+static int _layouts_read_config(layout_plugin_t* plugin)
+{
+	int rc;
+	char* filename = _conf_get_filename(plugin->layout->type);
+	if (!filename) {
+		fatal("layouts: cannot find configuration file for "
+		      "required layout '%s'", plugin->name);
+	}
+	rc = _layouts_load_config_common(plugin, filename, NULL, 0);
+	xfree(filename);
 	return rc;
 }
 
@@ -893,130 +923,29 @@ cleanup:
  */
 static int _layouts_read_state(layout_plugin_t* plugin)
 {
-	s_p_hashtbl_t* tbl = NULL;
-	s_p_hashtbl_t** entities_tbl = NULL;
-	s_p_hashtbl_t* entity_tbl = NULL;
-	int entities_tbl_count = 0, i;
+	int rc;
 	struct stat stat_buf;
-	int rc = SLURM_ERROR;
-	char* filename = NULL;
-
-	uint32_t l_priority;
-
-	entity_t* e;
-	char* e_name = NULL;
-	char* e_type = NULL;
-
-	if (!plugin->ops->spec->options) {
-		/* no option in this layout plugin, nothing to parse */
-		return SLURM_SUCCESS;
-	}
-
-	tbl = _conf_make_hashtbl(plugin->layout->struct_type,
-				 plugin->ops->spec->options);
-	filename = _state_get_filename(plugin->layout->type);
+	char *filename = _state_get_filename(plugin->layout->type);
 	if (!filename) {
 		error("layouts: unable to build read state filename of layout"
-		     " '%s/%s'", plugin->layout->type, plugin->layout->name);
-		s_p_hashtbl_destroy(tbl);
+		      " '%s/%s'", plugin->layout->type, plugin->layout->name);
 		return SLURM_ERROR;
 	}
-	/* check availability of the file otherwise s_p_parse_file will block 
-	 * waiting for a file to appear (this behavior should be made optional)
-	 * to avoid having to do that here) */
+	/* check availability of the file otherwise it will later block
+	 * waiting for a file to appear (in s_p_parse_file) */
 	if (stat(filename, &stat_buf) < 0) {
 		debug("layouts: skipping non existent state file for '%s/%s'",
 		      plugin->layout->type, plugin->layout->name);
-		rc = SLURM_SUCCESS;
-		goto cleanup;
+	} else {
+		rc = _layouts_load_config_common(plugin, filename, NULL, 1);
 	}
-	if (s_p_parse_file(tbl, NULL, filename, false) == SLURM_ERROR) {
-		info("layouts: something went wrong when opening/reading "
-		      "'%s': %m", filename);
-		goto cleanup;
-	}
-	debug3("layouts: state file '%s' is loaded", filename);
-
-	if (s_p_get_uint32(&l_priority, "Priority", tbl)) {
-		plugin->layout->priority = l_priority;
-	}
-
-	/* get the config hash tables of the defined entities */
-	if (!s_p_get_expline(&entities_tbl, &entities_tbl_count,
-				"Entity", tbl)) {
-		error("layouts: no valid Entity found, can not append any "
-		      "information nor construct relations for %s/%s",
-		      plugin->layout->type, plugin->layout->name);
-		goto cleanup;
-	}
-
-	/* stage 1: create the described entities or update them */
-	for (i = 0; i < entities_tbl_count; ++i) {
-		entity_tbl = entities_tbl[i];
-		xfree(e_name);
-		xfree(e_type);
-		if (!s_p_get_string(&e_name, "Entity", entity_tbl)) {
-			error("layouts: no name associated to entity[%d], "
-			      "skipping...", i);
-			continue;
-		}
-
-		/* look for the entity in the entities hash table*/
-		e = xhash_get(mgr->entities, e_name);
-		if (!e) {
-			/* if the entity does not already exists, create it */
-			if (!s_p_get_string(&e_type, "Type", entity_tbl)) {
-				error("layouts: entity '%s' does not already "
-				      "exists and no type was specified, "
-				      "skipping", e_name);
-				continue;
-			}
-			if (!_string_in_array(e_type,
-					      plugin->ops->spec->etypes)) {
-				error("layouts: entity '%s' type (%s) is "
-				      "invalid, skipping", e_name, e_type);
-				continue;
-			}
-
-			e = (entity_t*)xmalloc(sizeof(entity_t));
-			entity_init(e, e_name, e_type);
-			xhash_add(mgr->entities, e);
-
-		} else if (s_p_get_string(&e_type, "Type", entity_tbl)) {
-			/* if defined, check that the type is consistent */
-			if (!_string_in_array(e_type,
-					      plugin->ops->spec->etypes)) {
-				error("layouts: entity '%s' type (%s) is "
-				      "invalid, skipping", e_name, e_type);
-				continue;
-			}
-			if (!e->type || strcmp(e_type, e->type)) {
-				error("layouts: entity '%s' type (%s) differs "
-				      "from already registered entity type (%s)"
-				      " skipping", e_name, e_type, e->type);
-				continue;
-			}
-		}
-
-		/*
-		 * if the layout plugin requests automerge, try to automatically
-		 * parse the conf hash table using the s_p_option_t description
-		 * of the plugin, creating the key/vlaue with the right value
-		 * type and adding them to the entity key hash table.
-		 */
-		if (plugin->ops->spec->automerge) {
-			_layouts_load_automerge(plugin, e, entity_tbl);
-		}
-
-	}
-
-	rc = SLURM_SUCCESS;
-
-cleanup:
-	s_p_hashtbl_destroy(tbl);
 	xfree(filename);
-
 	return rc;
+}
+
+static int _layouts_update_state(layout_plugin_t* plugin, Buf buffer)
+{
+	return _layouts_load_config_common(plugin, NULL, buffer, 1);
 }
 
 typedef struct _layouts_build_xtree_walk_st {
@@ -1722,6 +1651,25 @@ int layouts_pack_layout(char *l_type, Buf buffer)
 	return SLURM_SUCCESS;
 }
 
+int layouts_update_layout(char *l_type, Buf buffer)
+{
+	int i, rc;
+	slurm_mutex_lock(&mgr->lock);
+	for (i = 0; i < mgr->plugins_count; i++) {
+		if (!strcmp(mgr->plugins[i].name, l_type)) {
+			rc = _layouts_update_state((layout_plugin_t*)
+						   &mgr->plugins[i],
+						   buffer);
+			slurm_mutex_unlock(&mgr->lock);
+			return rc;
+		}
+	}
+	error("layouts: update layout : no plugin matching layout=%s, skipping",
+	      l_type);
+	slurm_mutex_unlock(&mgr->lock);
+	return SLURM_ERROR;
+}
+
 int layouts_state_save_layout(char* l_type)
 {
 	int error_code = 0, log_fd;
@@ -1768,9 +1716,6 @@ int layouts_state_save_layout(char* l_type)
 				continue;
 			}
 		unpack_error:
-			error("layouts: saving '%s' state : unable to unpack "
-			      "string, buffer is %u/%u processed",
-			      buffer->processed, buffer->size);
 			break;
 		}
 		fflush(fdump);
