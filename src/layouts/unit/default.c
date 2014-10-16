@@ -16,6 +16,9 @@ s_p_options_t entity_options[] = {
 	{"long", S_P_LONG},
 	{"uint16", S_P_UINT16},
 	{"uint32", S_P_UINT32},
+	{"float", S_P_FLOAT},
+	{"double", S_P_DOUBLE},
+	{"ldouble", S_P_LONG_DOUBLE},
 	{NULL}
 };
 s_p_options_t options[] = {
@@ -28,6 +31,9 @@ const layouts_keyspec_t keyspec[] = {
 	{"long", L_T_LONG},
 	{"uint16", L_T_UINT16},
 	{"uint32", L_T_UINT32},
+	{"float", L_T_FLOAT},
+	{"double", L_T_DOUBLE},
+	{"ldouble", L_T_LONG_DOUBLE},
 	{NULL}
 };
 
