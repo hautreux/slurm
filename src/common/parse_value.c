@@ -218,7 +218,8 @@ int s_p_handle_double(double* data, const char* key, const char* value)
 	return SLURM_SUCCESS;
 }
 
-int s_p_handle_ldouble(long double* data, const char* key, const char* value)
+int s_p_handle_long_double(long double* data, const char* key,
+			   const char* value)
 {
 	char *endptr;
 	long double num;

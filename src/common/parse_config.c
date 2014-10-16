@@ -77,6 +77,9 @@ strong_alias(s_p_get_string,		slurm_s_p_get_string);
 strong_alias(s_p_get_long,		slurm_s_p_get_long);
 strong_alias(s_p_get_uint16,		slurm_s_p_get_uint16);
 strong_alias(s_p_get_uint32,		slurm_s_p_get_uint32);
+strong_alias(s_p_get_float,		slurm_s_p_get_float);
+strong_alias(s_p_get_double,		slurm_s_p_get_double);
+strong_alias(s_p_get_long_double,	slurm_s_p_get_long_double);
 strong_alias(s_p_get_pointer,		slurm_s_p_get_pointer);
 strong_alias(s_p_get_array,		slurm_s_p_get_array);
 strong_alias(s_p_get_boolean,		slurm_s_p_get_boolean);
@@ -604,6 +607,29 @@ static void* _handle_boolean(const char* key, const char* value)
 	return data;
 }
 
+static void* _handle_float(const char* key, const char* value)
+{
+	float* data = (float*)xmalloc(sizeof(float));
+	if (s_p_handle_float(data, key, value) == SLURM_ERROR)
+		return NULL;
+	return data;
+}
+
+static void* _handle_double(const char* key, const char* value)
+{
+	double* data = (double*)xmalloc(sizeof(double));
+	if (s_p_handle_double(data, key, value) == SLURM_ERROR)
+		return NULL;
+	return data;
+}
+
+static void* _handle_ldouble(const char* key, const char* value)
+{
+	long double* data = (long double*)xmalloc(sizeof(long double));
+	if (s_p_handle_long_double(data, key, value) == SLURM_ERROR)
+		return NULL;
+	return data;
+}
 
 static int _handle_pointer(s_p_values_t *v, const char *value,
 			   const char *line, char **leftover)
@@ -699,6 +725,18 @@ static int _handle_expline_cmp_uint32(const void* v1, const void* v2)
 {
 	return *((uint32_t*)v1) != *((uint32_t*)v2);
 }
+static int _handle_expline_cmp_float(const void* v1, const void* v2)
+{
+	return *((float*)v1) != *((float*)v2);
+}
+static int _handle_expline_cmp_double(const void* v1, const void* v2)
+{
+	return *((double*)v1) != *((double*)v2);
+}
+static int _handle_expline_cmp_ldouble(const void* v1, const void* v2)
+{
+	return *((long double*)v1) != *((long double*)v2);
+}
 
 /* ac = array case
  * the master key type is not string. Iterate over the tables looking
@@ -770,6 +808,21 @@ static void _handle_expline_merge(_expline_values_t* v_data,
 	case S_P_UINT32:
 		_handle_expline_ac(current_tbl, master_key, matchp->data,
 				   _handle_expline_cmp_uint32, &v_data->values,
+				   tables_count);
+		break;
+	case S_P_FLOAT:
+		_handle_expline_ac(current_tbl, master_key, matchp->data,
+				   _handle_expline_cmp_float, &v_data->values,
+				   tables_count);
+		break;
+	case S_P_DOUBLE:
+		_handle_expline_ac(current_tbl, master_key, matchp->data,
+				   _handle_expline_cmp_double, &v_data->values,
+				   tables_count);
+		break;
+	case S_P_LONG_DOUBLE:
+		_handle_expline_ac(current_tbl, master_key, matchp->data,
+				   _handle_expline_cmp_ldouble, &v_data->values,
 				   tables_count);
 		break;
 	}
@@ -861,7 +914,15 @@ static void _handle_keyvalue_match(s_p_values_t *v,
 	case S_P_EXPLINE:
 		_handle_expline(v, value, line, leftover);
 		break;
-
+	case S_P_FLOAT:
+		_handle_common(v, value, line, leftover, _handle_float);
+		break;
+	case S_P_DOUBLE:
+		_handle_common(v, value, line, leftover, _handle_double);
+		break;
+	case S_P_LONG_DOUBLE:
+		_handle_common(v, value, line, leftover, _handle_ldouble);
+		break;
 	}
 }
 
@@ -1847,6 +1908,44 @@ int s_p_get_boolean(bool *flag, const char *key, const s_p_hashtbl_t *hashtbl)
 	return 0;
 }
 
+int s_p_get_float(float *num, const char *key,
+		  const s_p_hashtbl_t *hashtbl)
+{
+	s_p_values_t *p = _get_check(S_P_FLOAT, key, hashtbl);
+
+	if (p) {
+		*num = *(float *)p->data;
+		return 1;
+	}
+
+	return 0;
+}
+
+int s_p_get_double(double *num, const char *key,
+		  const s_p_hashtbl_t *hashtbl)
+{
+	s_p_values_t *p = _get_check(S_P_DOUBLE, key, hashtbl);
+
+	if (p) {
+		*num = *(double *)p->data;
+		return 1;
+	}
+
+	return 0;
+}
+
+int s_p_get_long_double(long double *num, const char *key,
+			const s_p_hashtbl_t *hashtbl)
+{
+	s_p_values_t *p = _get_check(S_P_LONG_DOUBLE, key, hashtbl);
+
+	if (p) {
+		*num = *(long double *)p->data;
+		return 1;
+	}
+
+	return 0;
+}
 
 /*
  * Given an "options" array, print the current values of all
@@ -1861,6 +1960,9 @@ void s_p_dump_values(const s_p_hashtbl_t *hashtbl,
 	long num;
 	uint16_t num16;
 	uint32_t num32;
+	float numf;
+	double numd;
+	long double numld;
 	char *str;
 	void *ptr;
 	void **ptr_array;
@@ -1933,6 +2035,24 @@ void s_p_dump_values(const s_p_hashtbl_t *hashtbl,
 			} else {
 				verbose("%s", op->key);
 			}
+			break;
+		case S_P_FLOAT:
+			if (s_p_get_float(&numf, op->key, hashtbl))
+				verbose("%s = %f", op->key, numf);
+			else
+				verbose("%s", op->key);
+			break;
+		case S_P_DOUBLE:
+			if (s_p_get_double(&numd, op->key, hashtbl))
+				verbose("%s = %f", op->key, numd);
+			else
+				verbose("%s", op->key);
+			break;
+		case S_P_LONG_DOUBLE:
+			if (s_p_get_long_double(&numld, op->key, hashtbl))
+				verbose("%s = %Lf", op->key, numld);
+			else
+				verbose("%s", op->key);
 			break;
 		case S_P_IGNORE:
 			break;

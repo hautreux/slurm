@@ -254,7 +254,11 @@ typedef enum slurm_parser_enum {
 	S_P_BOOLEAN,
 	S_P_LINE,
 	S_P_EXPLINE,
-	S_P_PLAIN_STRING /* useful only within S_P_EXPLINE */
+	S_P_PLAIN_STRING /* useful only within S_P_EXPLINE */,
+	S_P_FLOAT,
+	S_P_DOUBLE,
+	S_P_LONG_DOUBLE
+
 } slurm_parser_enum_t;
 
 /*
@@ -456,6 +460,57 @@ int s_p_get_uint16(uint16_t *num, const char *key,
  */
 int s_p_get_uint32(uint32_t *num, const char *key,
 		   const s_p_hashtbl_t *hashtbl);
+
+/*
+ * s_p_get_float
+ *
+ * Search for a key in a s_p_hashtbl_t with value of type
+ * float.  If the key is found and has a set value, the
+ * value is retuned in "num".
+ *
+ * OUT num - pointer to a float where the value is returned
+ * IN key - hash table key
+ * IN hashtbl - hash table created by s_p_hashtbl_create()
+ *
+ * Returns 1 when a value was set for "key" during parsing and "num"
+ *   was successfully set, otherwise returns 0;
+ */
+int s_p_get_float(float *num, const char *key,
+		  const s_p_hashtbl_t *hashtbl);
+
+/*
+ * s_p_get_double
+ *
+ * Search for a key in a s_p_hashtbl_t with value of type
+ * double.  If the key is found and has a set value, the
+ * value is retuned in "num".
+ *
+ * OUT num - pointer to a double where the value is returned
+ * IN key - hash table key
+ * IN hashtbl - hash table created by s_p_hashtbl_create()
+ *
+ * Returns 1 when a value was set for "key" during parsing and "num"
+ *   was successfully set, otherwise returns 0;
+ */
+int s_p_get_double(double *num, const char *key,
+		   const s_p_hashtbl_t *hashtbl);
+
+/*
+ * s_p_get_long_double
+ *
+ * Search for a key in a s_p_hashtbl_t with value of type
+ * long double.  If the key is found and has a set value, the
+ * value is retuned in "num".
+ *
+ * OUT num - pointer to a long double where the value is returned
+ * IN key - hash table key
+ * IN hashtbl - hash table created by s_p_hashtbl_create()
+ *
+ * Returns 1 when a value was set for "key" during parsing and "num"
+ *   was successfully set, otherwise returns 0;
+ */
+int s_p_get_long_double(long double *num, const char *key,
+			const s_p_hashtbl_t *hashtbl);
 
 /*
  * s_p_get_operator
