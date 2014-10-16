@@ -1129,17 +1129,16 @@ static void _pack_entity_layout_data(void* item, void* arg)
 	_pack_args_t *pargs;
 
 	layouts_keydef_t* keydef;
-	char *data_dump, *str;
+	char *data_dump;
 
 	xassert(item);
 	xassert(arg);
 
 	data = (entity_data_t*) item;
 	pargs = (_pack_args_t *) arg;
-	str = pargs->current_line;
 
 	/* the pack args must contain a valid char* to append to */
-	xassert(str);
+	xassert(pargs->current_line);
 
 	/* we must be able to get the keydef associated to the data key */
 	xassert(data);
@@ -1151,8 +1150,8 @@ static void _pack_entity_layout_data(void* item, void* arg)
 		data_dump = _pack_data_key(keydef, data->value);
 		/* avoid printing any error in case of NULL pointer returned */
 		if (data_dump) {
-			xstrcat(str, " ");
-			xstrcat(str, data_dump);
+			xstrcat(pargs->current_line, " ");
+			xstrcat(pargs->current_line, data_dump);
 			xfree(data_dump);
 		}
 	}
@@ -1240,6 +1239,9 @@ static uint8_t _pack_layout_tree(xtree_node_t* node, uint8_t which,
 	pargs->current_line = str;
 	if (e)
 		xhash_walk(e->data, _pack_entity_layout_data, pargs);
+	/* the current line might have been extended/remalloced, so
+	 * we need to sync it again in str for further actions */
+	str = pargs->current_line;
 	pargs->current_line = NULL;
 
 	/* print enclosed entities if any */
