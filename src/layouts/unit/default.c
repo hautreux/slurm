@@ -19,6 +19,7 @@ s_p_options_t entity_options[] = {
 	{"float", S_P_FLOAT},
 	{"double", S_P_DOUBLE},
 	{"ldouble", S_P_LONG_DOUBLE},
+	{"readonly", S_P_BOOLEAN},
 	{NULL}
 };
 s_p_options_t options[] = {
@@ -34,6 +35,7 @@ const layouts_keyspec_t keyspec[] = {
 	{"float", L_T_FLOAT},
 	{"double", L_T_DOUBLE},
 	{"ldouble", L_T_LONG_DOUBLE},
+	{"readonly", L_T_BOOLEAN, KEYSPEC_RDONLY},
 	{NULL}
 };
 
