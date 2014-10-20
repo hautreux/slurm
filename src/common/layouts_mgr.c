@@ -62,6 +62,13 @@
 
 #define PATHLEN 256
 
+/* use to specify which layout callbacks to perform while loading data
+ * from conf files, state files or input buffers */
+#define CONF_DONE       0x00000001
+#define PARSE_ENTITY    0x00000002
+#define UPDATE_DONE     0x00000004
+#define PARSE_RELATIONS 0x00000008
+
 /*****************************************************************************\
  *                            STRUCTURES AND TYPES                           *
 \*****************************************************************************/
@@ -104,6 +111,8 @@ typedef struct layout_ops_st {
 			  s_p_hashtbl_t* tbl);
 	void (*entity_parsing) (entity_t* e, s_p_hashtbl_t* etbl,
 				layout_t* layout);
+	int (*update_done) (layout_t* layout, entity_t** e_array,
+			    int e_cnt);
 } layout_ops_t;
 
 /*
@@ -115,6 +124,7 @@ const char *layout_syms[] = {
 	"plugin_spec",             /* holds constants, definitions, ... */
 	"layouts_p_conf_done",     /* */
 	"layouts_p_entity_parsing",
+	"layouts_p_update_done",
 };
 
 /*
@@ -729,12 +739,14 @@ static int _layouts_read_config_post(layout_plugin_t* plugin,
  *       is a full load or not (state save only)
  */
 static int _layouts_load_config_common(layout_plugin_t* plugin,
-				       char* filename, Buf buffer, int flags)
+				       char* filename, Buf buffer,
+				       uint32_t flags)
 {
 	s_p_hashtbl_t* tbl = NULL;
 	s_p_hashtbl_t** entities_tbl = NULL;
 	s_p_hashtbl_t* entity_tbl = NULL;
 	int entities_tbl_count = 0, i;
+	entity_t** updated_entities = NULL;
 	int rc = SLURM_ERROR;
 
 	uint32_t l_priority;
@@ -781,8 +793,14 @@ static int _layouts_load_config_common(layout_plugin_t* plugin,
 		goto cleanup;
 	}
 
+	/* stage 0: xmalloc an array of entity_t* to save the updated entity_t
+	 * and give their references in the update_done layout callback */
+	updated_entities = (entity_t**)
+		xmalloc(entities_tbl_count*sizeof(entity_t*));
+
 	/* stage 1: create the described entities or update them */
 	for (i = 0; i < entities_tbl_count; ++i) {
+		updated_entities[i] = NULL;
 		entity_tbl = entities_tbl[i];
 		xfree(e_name);
 		xfree(e_type);
@@ -833,7 +851,7 @@ static int _layouts_load_config_common(layout_plugin_t* plugin,
 		 * look for "Enclosed" pragmas identifying the relations
 		 * among entities and kep that along with the entity for
 		 * stage 2 */
-		if(!flags)
+		if(flags & PARSE_RELATIONS)
 			_layouts_parse_relations(plugin, e, entity_tbl);
 
 		/*
@@ -850,10 +868,14 @@ static int _layouts_load_config_common(layout_plugin_t* plugin,
 		 * in case the automerge was not sufficient, the layout parsing
 		 * callback is called for further actions.
 		 */
-		if (plugin->ops->entity_parsing) {
+		if ((flags & PARSE_ENTITY) && plugin->ops->entity_parsing) {
 			plugin->ops->entity_parsing(e, entity_tbl,
 						    plugin->layout);
 		}
+
+		/* add the entity ref to the array for further usage when
+		 * calling the update_done layout callback */
+		updated_entities[i] = e;
 	}
 
 	/* ** Full load config only (flags==0) **
@@ -862,7 +884,7 @@ static int _layouts_load_config_common(layout_plugin_t* plugin,
 	 * the relational structure of the layout.
 	 * fails in case of error as a root is mandatory to walk the relational
 	 * structure of the layout */
-	if (!flags &&
+	if ((flags & CONF_DONE) &&
 	    _layouts_read_config_post(plugin, tbl) != SLURM_SUCCESS) {
 		goto cleanup;
 	}
@@ -871,7 +893,7 @@ static int _layouts_load_config_common(layout_plugin_t* plugin,
 	 * call the layout plugin conf_done callback for further
 	 * layout specific actions.
 	 */
-	if (!flags && plugin->ops->conf_done) {
+	if ((flags & CONF_DONE) && plugin->ops->conf_done) {
 		if (!plugin->ops->conf_done(mgr->entities, plugin->layout,
 					    tbl)) {
 			error("layouts: plugin %s/%s has an error parsing its"
@@ -880,6 +902,24 @@ static int _layouts_load_config_common(layout_plugin_t* plugin,
 			goto cleanup;
 		}
 	}
+
+	/*
+	 * Call the layout plugin update_done callback for further
+	 * layout specific actions.
+	 * Note : some entries of the updated_entities array might be NULL
+	 * reflecting an issue while trying to analyze the corresponding
+	 * parsed hash table.
+	 */
+	if ((flags & UPDATE_DONE) && plugin->ops->update_done) {
+		if (!plugin->ops->update_done(plugin->layout, updated_entities,
+					      entities_tbl_count)) {
+			error("layouts: plugin %s/%s has an error reacting to"
+			      " entities update", plugin->layout->type,
+			      plugin->layout->name);
+			goto cleanup;
+		}
+	}
+	xfree(updated_entities);
 
 	rc = SLURM_SUCCESS;
 
@@ -910,7 +950,9 @@ static int _layouts_read_config(layout_plugin_t* plugin)
 		fatal("layouts: cannot find configuration file for "
 		      "required layout '%s'", plugin->name);
 	}
-	rc = _layouts_load_config_common(plugin, filename, NULL, 0);
+	rc = _layouts_load_config_common(plugin, filename, NULL,
+					 CONF_DONE |
+					 PARSE_ENTITY | PARSE_RELATIONS);
 	xfree(filename);
 	return rc;
 }
@@ -944,7 +986,8 @@ static int _layouts_read_state(layout_plugin_t* plugin)
 		debug("layouts: skipping non existent state file for '%s/%s'",
 		      plugin->layout->type, plugin->layout->name);
 	} else {
-		rc = _layouts_load_config_common(plugin, filename, NULL, 1);
+		rc = _layouts_load_config_common(plugin, filename, NULL,
+						 PARSE_ENTITY);
 	}
 	xfree(filename);
 	return rc;
@@ -952,7 +995,8 @@ static int _layouts_read_state(layout_plugin_t* plugin)
 
 static int _layouts_update_state(layout_plugin_t* plugin, Buf buffer)
 {
-	return _layouts_load_config_common(plugin, NULL, buffer, 1);
+	return _layouts_load_config_common(plugin, NULL, buffer,
+					   PARSE_ENTITY | UPDATE_DONE);
 }
 
 typedef struct _layouts_build_xtree_walk_st {
