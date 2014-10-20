@@ -55,7 +55,7 @@ const layouts_plugin_spec_t plugin_spec = {
 	      */
 };
 
-/* manager is lock then this function is called */
+/* manager is lock when this function is called */
 /* disable this callback by setting it to NULL, warn: not every callback can
  * be desactivated this way */
 int layouts_p_conf_done(
@@ -70,6 +70,26 @@ int layouts_p_conf_done(
 void layouts_p_entity_parsing(
 		entity_t* e, s_p_hashtbl_t* etbl, layout_t* layout)
 {
+}
+
+/* manager is lock then this function is called */
+/* disable this callback by setting it to NULL, warn: not every callback can
+ * be desactivated this way */
+int layouts_p_update_done(layout_t* layout, entity_t** e_array, int e_cnt)
+{
+	int i;
+	debug3("layouts/unit: receiving update callback for %d entities",
+	       e_cnt);
+	for (i=0; i < e_cnt; i++) {
+		if (e_array[i] == NULL) {
+			debug3("layouts/unit: skipping update of nullified"
+			       "entity[%d]", i);
+		} else {
+			debug3("layouts/unit: updating entity[%d]=%s",
+			       i, e_array[i]->name);
+		}
+	}
+	return 1;
 }
 
 int init(void)
