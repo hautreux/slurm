@@ -93,7 +93,7 @@ strong_alias(transfer_s_p_options,	slurm_transfer_s_p_options);
 static regex_t keyvalue_re;
 static char *keyvalue_pattern =
 	"^[[:space:]]*"
-	"([[:alnum:]]+)" /* key */
+	"([[:alnum:]_.]+)" /* key */
 	"[[:space:]]*([-*+/]?)=[[:space:]]*"
 	"((\"([^\"]*)\")|([^[:space:]]+))" /* value: quoted with whitespace,
 					    * or unquoted and no whitespace */
@@ -1652,7 +1652,7 @@ int s_p_parse_line_expanded(const s_p_hashtbl_t *hashtbl,
 	 */
 	tables = (s_p_hashtbl_t**)xmalloc(tables_count *
 					  sizeof(s_p_hashtbl_t*));
-	for (i = 0; i < tables_count; ++i) {
+	for (i = 0; i < tables_count; i++) {
 		free(value_str);
 		value_str = hostlist_shift(value_hl);
 		tables[i] = _hashtbl_copy_keys(hashtbl,
@@ -1690,9 +1690,10 @@ cleanup:
 	if (strhashtbl)
 		s_p_hashtbl_destroy(strhashtbl);
 
-	if (status == SLURM_ERROR) {
-		for (i = 0; i < tables_count; ++i)
-			s_p_hashtbl_destroy(tables[i]);
+	if (status == SLURM_ERROR && tables) {
+		for (i = 0; i < tables_count; i++)
+			if (tables[i])
+				s_p_hashtbl_destroy(tables[i]);
 		xfree(tables);
 	}
 	else {
