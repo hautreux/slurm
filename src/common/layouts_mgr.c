@@ -378,6 +378,47 @@ int _layouts_entity_get_kv_flags(layout_t* l, entity_t* e, char* key)
 	return SLURM_ERROR;
 }
 
+int _layouts_entity_get_kv_size(layout_t* l, entity_t* e, char* key, size_t *size)
+{
+	layouts_keydef_t* keydef;
+	keydef = _layouts_entity_get_kv_keydef(l, e, key);
+	if (keydef != NULL) {
+		switch(keydef->type) {
+		case L_T_ERROR:
+			return SLURM_ERROR;
+		case L_T_STRING:
+			*size = sizeof(void*);
+			break;
+		case L_T_CUSTOM:
+			*size = sizeof(void*);
+			break;
+		case L_T_LONG:
+			*size = sizeof(long);
+			break;
+		case L_T_UINT16:
+			*size = sizeof(uint16_t);
+			break;
+		case L_T_UINT32:
+			*size = sizeof(uint32_t);
+			break;
+		case L_T_BOOLEAN:
+			*size = sizeof(bool);
+			break;
+		case L_T_FLOAT:
+			*size = sizeof(float);
+			break;
+		case L_T_DOUBLE:
+			*size = sizeof(double);
+			break;
+		case L_T_LONG_DOUBLE:
+			*size = sizeof(long double);
+			break;
+		}
+	} else
+		return SLURM_ERROR;
+	return SLURM_SUCCESS;
+}
+
 bool _layouts_entity_check_kv_keytype(layout_t* l, entity_t* e, char* key,
 				      layouts_keydef_types_t key_type)
 {
@@ -554,6 +595,44 @@ int _layouts_entity_get_kv(layout_t* l, entity_t* e, char* key, void* value,
 	return SLURM_SUCCESS;
 }
 
+int _layouts_entity_get_mkv(layout_t* l, entity_t* e, char* keys, void* value,
+			    size_t length, layouts_keydef_types_t key_type)
+{
+	char *key = NULL;
+	hostlist_t kl;
+	size_t processed = 0;
+	size_t elt_size = sizeof(void*);;
+	int rc = 0;
+
+	/* expand in order the requested keys (in hostlist format)
+	 * and iterate over each one of them, collecting the different
+	 * values into the provided buffer.
+	 * if no more space is available in the buffer, then just count
+	 * the missing elements for the exit code.
+	 * the first error encountered fakes a full buffer to just add
+	 * the remaining keys to the missing elements count before
+	 * exiting. */
+	kl = hostlist_create(keys);
+	while ((key = hostlist_shift(kl))) {
+		if (processed >= length) {
+			rc++;
+			continue;
+		}
+		if (_layouts_entity_get_kv_size(l, e, key, &elt_size) ||
+		    (processed + elt_size) > length ||
+		    _layouts_entity_get_kv(l, e, key, value, key_type)) {
+			rc++;
+			processed = length;
+			continue;
+		}
+		value += elt_size;
+		processed += elt_size;
+	}
+	hostlist_destroy(kl);
+
+	return rc;
+}
+
 int _layouts_entity_get_kv_ref(layout_t* l, entity_t* e,
 			       char* key, void** value,
 			       layouts_keydef_types_t key_type)
@@ -574,6 +653,43 @@ int _layouts_entity_get_kv_ref(layout_t* l, entity_t* e,
 		*value = data;
 		rc = SLURM_SUCCESS;
 	}
+	return rc;
+}
+
+int _layouts_entity_get_mkv_ref(layout_t* l, entity_t* e, char* keys,
+				void* value, size_t length,
+				layouts_keydef_types_t key_type)
+{
+	char *key = NULL;
+	hostlist_t kl;
+	size_t processed = 0;
+	size_t elt_size = sizeof(void*);
+	int rc = 0;
+
+	/* expand in order the requested keys (in hostlist format)
+	 * and iterate over each one of them, collecting the different
+	 * references into the provided buffer.
+	 * if no more space is available in the buffer, then just count
+	 * the missing elements for the exit code.
+	 * the first error encountered fakes a full buffer to just add
+	 * the remaining keys to the missing elements count before
+	 * exiting. */
+	kl = hostlist_create(keys);
+	while ((key = hostlist_shift(kl))) {
+		if (processed >= length) {
+			rc++;
+			continue;
+		}
+		if (_layouts_entity_get_kv_ref(l, e, key, value, key_type)) {
+			rc++;
+			processed = length;
+			continue;
+		}
+		value += elt_size;
+		processed += elt_size;
+	}
+	hostlist_destroy(kl);
+
 	return rc;
 }
 
@@ -2176,11 +2292,25 @@ int layouts_entity_get_kv(char* l, char* e, char* key, void* value,
 				key, value, key_type);
 }
 
+int layouts_entity_get_mkv(char* l, char* e, char* keys, void* value,
+			   size_t size, layouts_keydef_types_t key_type)
+{
+	_layouts_entity_wrapper(_layouts_entity_get_mkv, l, e,
+				keys, value, size, key_type);
+}
+
 int layouts_entity_get_kv_ref(char* l, char* e, char* key, void** value,
 			      layouts_keydef_types_t key_type)
 {
 	_layouts_entity_wrapper(_layouts_entity_get_kv_ref, l, e,
 				key, value, key_type);
+}
+
+int layouts_entity_get_mkv_ref(char* l, char* e, char* keys, void* value,
+			       size_t size, layouts_keydef_types_t key_type)
+{
+	_layouts_entity_wrapper(_layouts_entity_get_mkv_ref, l, e,
+				keys, value, size, key_type);
 }
 
 int layouts_entity_pullget_kv(char* l, char* e, char* key, void* value,

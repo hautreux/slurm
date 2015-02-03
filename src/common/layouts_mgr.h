@@ -429,4 +429,68 @@ int layouts_entity_pullget_kv_ref(char* layout, char* entity,
 				  char* key, void** value,
 				  layouts_keydef_types_t key_type);
 
+/*
+ * layouts_entity_get_mkv - get the values associated with a set of keys of an
+ *        entity in a particular layout.
+ *
+ * The input key_type will force the call to check types consistency between
+ * the requester and the underlying keyspec associated with the key. To skip
+ * that check the caller will have to pass a 0 value. This is mandatory for
+ * cases where the keyspecs of the requested keys do not share the same type.
+ *
+ * Note : the destination buffer will be sequentially filled with the content of
+ * the values associated with the requested keys in the entity.
+ * If the length of the buffer is too small, the remaining references will not
+ * be added and the counter of missed keys incremented as necessary.
+ * The first encountered error terminates the logic and the missing elements
+ * counter will reflect all the unprocessed elements including the faulty one.
+
+ * Special care must be taken for the following types of key :
+ *   L_T_STRING  : a char* will be added to the buffer. It will be xstrduped
+ *                 with the associated key value. The char* will have to be
+ *                 xfree() after that.
+ *   L_T_CUSTOM : a char* will be added to the buffer. It will be xstrduped
+ *                with the result of the custom_dump function. It will have to
+ *                be xfree() after that.
+ *   L_T_ERROR : will generate an error that will force the function to return
+ *               the count of missing elements (at least 1, depending on where
+ *               this type first appeared in the ordered list of keys to get.
+ *
+ * Note: keys correspond to a list of keys that can be represented as
+ * an hostlist expression (i.e. keys[1-10]).
+ *
+ * Return SLURM_SUCCES or the count of missed keys/references
+ */
+int layouts_entity_get_kv(char* layout, char* entity,
+			  char* key, void* value, size_t length,
+			  layouts_keydef_types_t key_type);
+
+/*
+ * layouts_entity_get_mkv_ref - get a set of pointers to the values associated
+ *        with a set of keys of an entity in a particular layout.
+ *
+ * The input key_type will force the call to check types consistency between
+ * the requester and the underlying keyspecs associated with the keys. To skip
+ * that check the caller will have to pass a 0 value. This is mandatory for cases
+ * where the keyspecs of the requested keys do not share the same type.
+ *
+ * The output buffer will be filled with the different references.
+ * If the length of the buffer is too small, the remaining references will not
+ * be added and the counter of missed keys incremented as necessary.
+ * The first encountered error terminates the logic and the missing elements
+ * counter will reflect all the unprocessed elements including the faulty one.
+ *
+ * Note: this call must be used with caution as the pointers could be free
+ * sooner or later by the underlying layout engine in reply to the execution
+ * of the layouts_entity_set_kv_ref().
+ *
+ * Note: keys correspond to a list of keys that can be represented as
+ * an hostlist expression (i.e. keys[1-10]).
+ *
+ * Return SLURM_SUCCES or the count of missed keys/references
+ */
+int layouts_entity_get_mkv_ref(char* layout, char* entity,
+			       char* keys, void* buffer, size_t length,
+			       layouts_keydef_types_t key_type);
+
 #endif /* end of include guard: __LAYOUTS_MGR_1NRINRSD__INC__ */
