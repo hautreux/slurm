@@ -461,9 +461,9 @@ int layouts_entity_pullget_kv_ref(char* layout, char* entity,
  *
  * Return SLURM_SUCCES or the count of missed keys/references
  */
-int layouts_entity_get_kv(char* layout, char* entity,
-			  char* key, void* value, size_t length,
-			  layouts_keydef_types_t key_type);
+int layouts_entity_get_mkv(char* layout, char* entity,
+			   char* keys, void* value, size_t length,
+			   layouts_keydef_types_t key_type);
 
 /*
  * layouts_entity_get_mkv_ref - get a set of pointers to the values associated
