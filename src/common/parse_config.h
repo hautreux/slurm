@@ -280,7 +280,10 @@ typedef enum slurm_parser_operator {
 	S_P_OPERATOR_ADD,
 	S_P_OPERATOR_SUB,
 	S_P_OPERATOR_MUL,
-	S_P_OPERATOR_DIV
+	S_P_OPERATOR_DIV,
+	S_P_OPERATOR_SET_IF_MIN,
+	S_P_OPERATOR_SET_IF_MAX,
+	S_P_OPERATOR_AVG
 } slurm_parser_operator_t;
 
 typedef struct conf_file_options {
