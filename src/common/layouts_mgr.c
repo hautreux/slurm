@@ -1843,6 +1843,7 @@ static void _tree_update_node_entity_data(void* item, void* arg) {
 	void* oldvalue;
 	void* value;
 	uint32_t count;
+	int setter;
 
 	xassert(item);
 	xassert(arg);
@@ -1906,6 +1907,8 @@ static void _tree_update_node_entity_data(void* item, void* arg) {
 		/* get parent node KV data ref */
 		enode = (entity_node_t*) xtree_node_get_data(node);
 		value = entity_get_data_ref(enode->entity, ref_keydef->key);
+		if (!value)
+			return;
 
 		/* only set operation currently provided for parents except
 		 * for fshare action */
@@ -1949,6 +1952,7 @@ static void _tree_update_node_entity_data(void* item, void* arg) {
 		}
 
 		/* iterate on the children */
+		setter = 1;
 		child = node->start;
 		while (child) {
 			/* get child node KV data ref */
@@ -1956,12 +1960,20 @@ static void _tree_update_node_entity_data(void* item, void* arg) {
 			value = entity_get_data_ref(enode->entity,
 						    ref_keydef->key);
 
+			if (!value) {
+				/* try next child */
+				child = child-> next;
+				continue;
+			}
+
 			switch (action) {
 			case KEYSPEC_UPDATE_CHILDREN_SUM:
 			case KEYSPEC_UPDATE_CHILDREN_AVG:
 				/* first child is a setter */
-				if (child == node->start)
+				if (setter) {
 					operator = S_P_OPERATOR_SET;
+					setter = 0;
+				}
 				else
 					operator = S_P_OPERATOR_ADD;
 				break;
